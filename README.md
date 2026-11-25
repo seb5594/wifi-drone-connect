@@ -11,7 +11,7 @@ python -m pip install .
 wifi-drone-connect profiles --ssid 'SKY CAM DRONE'
 wifi-drone-connect snapshot 'rtsp://camera.local/live' snapshot.jpg
 wifi-drone-connect snapshot 'kyufo://192.168.1.1?rotate=0' snapshot.jpg
-wifi-drone-connect snapshot 'jieli://192.168.80.1' snapshot.jpg
+wifi-drone-connect snapshot 'jieli://192.168.80.1?ver=2' snapshot.jpg
 wifi-drone-connect snapshot 'lewei://192.168.0.1' snapshot.jpg
 ```
 
@@ -33,7 +33,7 @@ async def read_snapshot(url: str) -> bytes:
 | --- | --- |
 | RTSP with RTP over TCP or UDP | Generic protocol adapter |
 | HTTP(S) video or MJPEG endpoint | Generic protocol adapter |
-| Gear2Play Sky Cam (`SKY CAM DRONE`, app `com.rcfpv.rxdrone`) | Profile identified by SSID. The unit's stream endpoint and protocol still need verification. |
+| Gear2Play Sky Cam (`SKY CAM DRONE`, app `com.rcfpv.rxdrone`) | A hardware trace confirms JieLi CTP on TCP 3333, access version 2 and an acknowledged stream request for 640 × 480 at 25 fps. Try `jieli://192.168.80.1?ver=2`. The trace contained no incoming video, so video transport remains to be verified. |
 | KY UFO / some `FLY-UFO-…` | `kyufo://192.168.1.1` uses RTSP port 7070, path `/webcam` and video heartbeats on UDP 7099. Default rotation is 90° clockwise. Use `?rotate=0` for an upright camera or MJPEG passthrough. |
 | JieLi / some `HF_…` | `jieli://192.168.80.1` uses camera CTP on TCP 3333 and receives the documented JPEG fragments on UDP 2224 or complete JPEG datagrams on UDP 6666. |
 | Lewei / some `WiFi-720P-…` models | `lewei://192.168.0.1` requests H.264 over TCP 7060. Supports plain and single-byte-inverted frames with stream types 0 and 1. |

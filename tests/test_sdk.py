@@ -23,7 +23,9 @@ class CameraTests(unittest.IsolatedAsyncioTestCase):
             await read_jpeg(stream)
 
     def test_profile_and_validation(self):
-        self.assertIsNone(identify("SKY CAM DRONE")[0].verified_protocol)
+        self.assertEqual(identify("SKY CAM DRONE")[0].verified_protocol, "jieli_ctp")
+        self.assertEqual(identify("SKY CAM DRONE abcdef01"), identify("SKY CAM DRONE"))
+        self.assertEqual(identify("SKY CAM DRONEX"), ())
         self.assertEqual(identify("another network"), ())
         for url in ("file:///tmp/video", "rtsp://", "http://camera:bad"):
             with self.subTest(url=url), self.assertRaises(ValueError):

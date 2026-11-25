@@ -75,11 +75,14 @@ class ToyTests(unittest.IsolatedAsyncioTestCase):
 
         async with await asyncio.start_server(drone, "127.0.0.1", 0) as server:
             port = server.sockets[0].getsockname()[1]
-            camera = camera_for_url(f"jieli://127.0.0.1:{port}")
+            camera = camera_for_url(f"jieli://127.0.0.1:{port}?ver=2")
             async with aclosing(camera.frames()) as frames:
                 self.assertEqual(await asyncio.wait_for(anext(frames), 3), JPEG)
             messages = await asyncio.wait_for(received, 3)
         self.assertEqual([message[0] for message in messages], [
             "APP_ACCESS", "DATE_TIME", "CTP_KEEP_ALIVE", "OPEN_RT_STREAM", "CLOSE_RT_STREAM",
         ])
+        self.assertEqual(messages[0][1], {"ver": "2", "type": "0"})
+        self.assertTrue(ctp_message("CTP_KEEP_ALIVE", include_empty_param=True).endswith(b'{"op":"PUT","param":{}}'))
+        self.assertEqual(camera_for_url("jieli://127.0.0.1").access_version, "25")
         self.assertEqual(messages[3][1], {"format": "0", "w": "320", "h": "240", "fps": "20"})

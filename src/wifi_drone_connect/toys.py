@@ -61,11 +61,14 @@ def camera_for_url(url: str, rtsp_transport: str = "tcp", copy_mjpeg: bool = Fal
     query = parse_qs(parsed.query, keep_blank_values=True)
     if any(len(values) != 1 for values in query.values()):
         raise ValueError("Toy camera options must occur only once")
-    if parsed.scheme in {"jieli", "lewei"}:
+    if parsed.scheme == "jieli":
+        version = query.get("ver", ["25"])[0]
+        if parsed.path not in {"", "/"} or set(query) - {"ver"} or version not in {"2", "25"}:
+            raise ValueError("Use jieli://HOST with an optional CTP port and ver=2 or ver=25")
+        return JieliCamera(parsed.hostname, parsed.port or 3333, access_version=version)
+    if parsed.scheme == "lewei":
         if parsed.path not in {"", "/"} or query:
             raise ValueError(f"Use {parsed.scheme}://HOST with an optional camera port")
-        if parsed.scheme == "jieli":
-            return JieliCamera(parsed.hostname, parsed.port or 3333)
         return LeweiCamera(parsed.hostname, parsed.port or 7060)
 
     if set(query) - {"rotate"}:

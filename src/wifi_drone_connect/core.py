@@ -14,6 +14,7 @@ class DeviceProfile:
     ssid: str | None
     android_package: str | None
     verified_protocol: str | None
+    ssid_prefix: str | None = None
 
 
 def profiles() -> tuple[DeviceProfile, ...]:
@@ -28,7 +29,10 @@ def profiles() -> tuple[DeviceProfile, ...]:
 
 def identify(ssid: str) -> tuple[DeviceProfile, ...]:
     """Match a supplied SSID locally, without transmitting on the network."""
-    return tuple(profile for profile in profiles() if profile.ssid == ssid)
+    return tuple(
+        profile for profile in profiles()
+        if profile.ssid == ssid or (profile.ssid_prefix and ssid.startswith(profile.ssid_prefix))
+    )
 
 
 class CameraError(Exception):

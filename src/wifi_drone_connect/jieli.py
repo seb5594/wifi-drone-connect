@@ -19,10 +19,10 @@ VIDEO_PORT = 2224
 JPEG_PORT = 6666
 
 
-def ctp_message(topic: str, **parameters: str) -> bytes:
+def ctp_message(topic: str, *, include_empty_param: bool = False, **parameters: str) -> bytes:
     topic_bytes = topic.encode("ascii")
     payload = {"op": "PUT"}
-    if parameters:
+    if parameters or include_empty_param:
         payload["param"] = parameters
     body = json.dumps(payload, separators=(",", ":")).encode()
     return b"CTP:" + CTP_LENGTH.pack(len(topic_bytes)) + topic_bytes + JSON_LENGTH.pack(len(body)) + body
@@ -123,6 +123,7 @@ class JieliCamera:
     host: str
     port: int = 3333
     frame_timeout: float = 15
+    access_version: str = "25"
 
     async def frames(self) -> AsyncGenerator[bytes, None]:
         loop = asyncio.get_running_loop()
@@ -177,8 +178,9 @@ class JieliCamera:
 
     async def _control(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         loop = asyncio.get_running_loop()
-        writer.write(ctp_message("APP_ACCESS", ver="25", type="0"))
+        writer.write(ctp_message("APP_ACCESS", ver=self.access_version, type="0"))
         await asyncio.wait_for(writer.drain(), 2)
+        keep_alive_request = ctp_message("CTP_KEEP_ALIVE", include_empty_param=self.access_version == "2")
         parameters = {}
         video_wait = loop.time() + 1.0
         keep_alive = 7.5
@@ -190,7 +192,7 @@ class JieliCamera:
                 now = loop.time()
                 if not opened and (parameters or now >= video_wait):
                     writer.write(ctp_message("DATE_TIME", date=datetime.now().strftime("%Y%m%d%H%M%S")))
-                    writer.write(ctp_message("CTP_KEEP_ALIVE"))
+                    writer.write(keep_alive_request)
                     writer.write(ctp_message(
                         "OPEN_RT_STREAM", format="0",
                         h=str(number(parameters, "h", 480, 16, 4096)),
@@ -201,7 +203,7 @@ class JieliCamera:
                     opened = True
                     next_send = now + keep_alive
                 elif opened and now >= next_send:
-                    writer.write(ctp_message("CTP_KEEP_ALIVE"))
+                    writer.write(keep_alive_request)
                     await asyncio.wait_for(writer.drain(), 2)
                     next_send = now + keep_alive
                 done, _ = await asyncio.wait({pending}, timeout=max(0, next_send - loop.time()))

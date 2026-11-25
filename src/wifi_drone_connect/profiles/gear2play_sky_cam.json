@@ -3,5 +3,6 @@
   "name": "Gear2Play Sky Cam",
   "ssid": "SKY CAM DRONE",
   "android_package": "com.rcfpv.rxdrone",
-  "verified_protocol": null
+  "verified_protocol": "jieli_ctp",
+  "ssid_prefix": "SKY CAM DRONE "
 }
