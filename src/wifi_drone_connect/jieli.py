@@ -114,7 +114,7 @@ class VideoPackets(asyncio.DatagramProtocol):
         if address[0] != self.host:
             return
         self.datagrams += 1
-        if len(data) >= 12 and data[0] >> 6 == 2:
+        if self.port == JPEG_PORT and len(data) >= 12 and data[0] >> 6 == 2:
             self.rtp_payload_types.add(data[1] & 0x7F)
         frames = self.fragments.feed(data) if self.fragments else (complete_jpeg(data),)
         for jpeg in frames:
