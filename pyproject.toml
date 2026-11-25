@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wifi-drone-connect"
+version = "0.1.0"
+description = "Asynchronous, read-only SDK for WiFi drone cameras"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = []
+
+[project.scripts]
+wifi-drone-connect = "wifi_drone_connect.cli:main"
+
+[project.urls]
+Repository = "https://github.com/seb5594/wifi-drone-connect"
+
+[tool.setuptools.package-data]
+wifi_drone_connect = ["profiles/*.json"]
