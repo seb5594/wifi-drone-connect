@@ -28,3 +28,11 @@ class CameraTests(unittest.IsolatedAsyncioTestCase):
         for url in ("file:///tmp/video", "rtsp://", "http://camera:bad"):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 FFmpegCamera(url)
+
+    def test_ffmpeg_uses_the_timeout_option_for_each_input_transport(self):
+        rtsp = FFmpegCamera("rtsp://camera/live", rtsp_transport="udp").command()
+        http = FFmpegCamera("http://camera/live").command()
+        self.assertIn("-timeout", rtsp)
+        self.assertNotIn("-rw_timeout", rtsp)
+        self.assertEqual(rtsp[rtsp.index("-rtsp_transport") + 1], "udp")
+        self.assertIn("-rw_timeout", http)

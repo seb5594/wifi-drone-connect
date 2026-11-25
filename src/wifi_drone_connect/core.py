@@ -1,6 +1,6 @@
 """Device profiles and the public camera adapter interface."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from importlib.resources import files
 import json
@@ -38,7 +38,7 @@ class CameraError(Exception):
 class CameraAdapter(Protocol):
     """An adapter produces complete JPEG frames and closes its source on exit."""
 
-    def frames(self) -> AsyncIterator[bytes]:
+    def frames(self) -> AsyncGenerator[bytes, None]:
         """Yield JPEG frames until the source disconnects."""
 
 

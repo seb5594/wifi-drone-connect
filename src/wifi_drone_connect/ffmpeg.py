@@ -1,7 +1,7 @@
 """Read RTSP or HTTP video via FFmpeg and yield bounded JPEG frames."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -65,20 +65,22 @@ class FFmpegCamera:
             raise ValueError("Frame timeout must be greater than zero and at most 300 seconds")
 
     def command(self) -> list[str]:
-        transport = []
+        timeout = str(int(self.frame_timeout * 1_000_000))
         if urlsplit(self.url).scheme == "rtsp":
-            transport = ["-rtsp_transport", self.rtsp_transport]
+            input_options = ["-rtsp_transport", self.rtsp_transport, "-timeout", timeout]
+        else:
+            input_options = ["-rw_timeout", timeout]
         codec = ["-c:v", "copy"] if self.copy_mjpeg else ["-c:v", "mjpeg", "-q:v", "3", "-threads", "1"]
         return [
             "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
             "-protocol_whitelist", "http,https,tls,tcp,udp,rtp",
-            "-rw_timeout", str(int(self.frame_timeout * 1_000_000)), *transport,
+            *input_options,
             "-i", self.url, "-map", "0:v:0", "-an", *codec,
             "-flush_packets", "1", "-f", "mpjpeg", "-boundary_tag",
             BOUNDARY[2:].decode("ascii"), "pipe:1",
         ]
 
-    async def frames(self) -> AsyncIterator[bytes]:
+    async def frames(self) -> AsyncGenerator[bytes, None]:
         try:
             process = await asyncio.create_subprocess_exec(
                 *self.command(),
