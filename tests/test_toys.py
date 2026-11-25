@@ -6,7 +6,7 @@ import socket
 import unittest
 
 from wifi_drone_connect import CameraError, camera_for_url
-from wifi_drone_connect.jieli import FRAGMENT, Fragments, ctp_message, read_ctp
+from wifi_drone_connect.jieli import FRAGMENT, Fragments, VideoPackets, ctp_message, read_ctp
 from wifi_drone_connect.toys import KYUFOCamera
 
 JPEG = b"\xff\xd8synthetic-jpeg\xff\xd9"
@@ -33,6 +33,14 @@ class ToyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list(fragments.feed(part(5, len(JPEG) - 5, 8, 130))), [])
         full = part(0, 5, 9) + part(5, len(JPEG) - 5, 10, 130)
         self.assertEqual(list(fragments.feed(full)), [JPEG])
+
+    def test_jieli_reports_undecoded_udp_packets_from_the_camera(self):
+        receiver = VideoPackets("192.168.80.1", asyncio.Queue(), 6666)
+        rtp = bytes((0x80, 26)) + bytes(12)
+        receiver.datagram_received(rtp, ("192.168.80.5", 1000))
+        receiver.datagram_received(rtp, ("192.168.80.1", 1000))
+        self.assertEqual(receiver.summary(), "UDP 6666: 1 packets, 0 JPEGs, possible RTP payload types 26")
+        self.assertTrue(receiver.images.empty())
 
     async def test_ky_heartbeat_is_camera_only_and_closes_with_source(self):
         class Video:

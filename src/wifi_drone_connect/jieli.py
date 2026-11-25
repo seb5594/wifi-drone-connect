@@ -6,6 +6,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import logging
 import socket
 from struct import Struct
 
@@ -17,6 +18,7 @@ FRAGMENT = Struct("<BxHIII4x")
 MAX_JPEG = 2 * 1024 * 1024
 VIDEO_PORT = 2224
 JPEG_PORT = 6666
+LOGGER = logging.getLogger(__name__)
 
 
 def ctp_message(topic: str, *, include_empty_param: bool = False, **parameters: str) -> bytes:
@@ -94,17 +96,32 @@ class Fragments:
 
 
 class VideoPackets(asyncio.DatagramProtocol):
-    def __init__(self, host: str, images: asyncio.Queue, fragmented: bool):
+    def __init__(self, host: str, images: asyncio.Queue, port: int):
         self.host = host
         self.images = images
-        self.fragments = Fragments() if fragmented else None
+        self.port = port
+        self.fragments = Fragments() if port == VIDEO_PORT else None
+        self.datagrams = 0
+        self.decoded = 0
+        self.rtp_payload_types: set[int] = set()
+
+    def summary(self) -> str:
+        payload_types = ",".join(str(value) for value in sorted(self.rtp_payload_types)) or "-"
+        return (f"UDP {self.port}: {self.datagrams} packets, {self.decoded} JPEGs,"
+                f" possible RTP payload types {payload_types}")
 
     def datagram_received(self, data: bytes, address) -> None:
         if address[0] != self.host:
             return
+        self.datagrams += 1
+        if len(data) >= 12 and data[0] >> 6 == 2:
+            self.rtp_payload_types.add(data[1] & 0x7F)
         frames = self.fragments.feed(data) if self.fragments else (complete_jpeg(data),)
         for jpeg in frames:
             if jpeg is not None:
+                self.decoded += 1
+                if self.decoded == 1:
+                    LOGGER.info("JieLi received a complete JPEG on UDP %d", self.port)
                 if self.images.full():
                     self.images.get_nowait()
                 self.images.put_nowait(jpeg)
@@ -128,7 +145,7 @@ class JieliCamera:
     async def frames(self) -> AsyncGenerator[bytes, None]:
         loop = asyncio.get_running_loop()
         images: asyncio.Queue[bytes] = asyncio.Queue(maxsize=1)
-        listeners = []
+        listeners: list[tuple[asyncio.DatagramTransport, VideoPackets]] = []
         writer = None
         control = None
         try:
@@ -138,11 +155,13 @@ class JieliCamera:
                 reader, writer = await asyncio.open_connection(host, self.port)
                 local = writer.get_extra_info("sockname")[0]
                 for port in (VIDEO_PORT, JPEG_PORT):
+                    receiver = VideoPackets(host, images, port)
                     endpoint, _ = await loop.create_datagram_endpoint(
-                        lambda: VideoPackets(host, images, port == VIDEO_PORT),
-                        local_addr=(local, port),
+                        lambda: receiver, local_addr=(local, port),
                     )
-                    listeners.append(endpoint)
+                    listeners.append((endpoint, receiver))
+            LOGGER.info("JieLi CTP connected on TCP %d, listening for video on UDP %d and %d",
+                        self.port, VIDEO_PORT, JPEG_PORT)
             control = asyncio.create_task(self._control(reader, writer))
             while True:
                 receive = asyncio.create_task(images.get())
@@ -153,6 +172,8 @@ class JieliCamera:
                     if control in done:
                         control.result()
                     if receive not in done:
+                        LOGGER.warning("JieLi video timeout. %s",
+                                       " | ".join(receiver.summary() for _, receiver in listeners))
                         raise CameraError("JieLi camera did not deliver a supported JPEG frame")
                     yield receive.result()
                 finally:
@@ -160,6 +181,9 @@ class JieliCamera:
                     with suppress(asyncio.CancelledError):
                         await receive
         except (OSError, TimeoutError, UnicodeError, asyncio.IncompleteReadError) as error:
+            LOGGER.warning("JieLi session ended during %s (%s)",
+                           "video reception" if control is not None else "TCP or UDP setup",
+                           type(error).__name__)
             raise CameraError("JieLi camera session disconnected or timed out") from error
         finally:
             if control is not None:
@@ -173,7 +197,7 @@ class JieliCamera:
                 writer.close()
                 with suppress(OSError, TimeoutError):
                     await asyncio.wait_for(writer.wait_closed(), 0.5)
-            for listener in listeners:
+            for listener, _ in listeners:
                 listener.close()
 
     async def _control(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -200,6 +224,7 @@ class JieliCamera:
                         fps=str(number(parameters, "fps", 25, 1, 120)),
                     ))
                     await asyncio.wait_for(writer.drain(), 2)
+                    LOGGER.info("JieLi sent OPEN_RT_STREAM for JPEG")
                     opened = True
                     next_send = now + keep_alive
                 elif opened and now >= next_send:
@@ -209,7 +234,15 @@ class JieliCamera:
                 done, _ = await asyncio.wait({pending}, timeout=max(0, next_send - loop.time()))
                 if pending in done:
                     topic, values = pending.result()
-                    if topic == "VIDEO_PARAM":
+                    if topic == "APP_ACCESS":
+                        LOGGER.info("JieLi replied to APP_ACCESS (requested version %s)", self.access_version)
+                    elif topic == "OPEN_RT_STREAM":
+                        LOGGER.info("JieLi replied to OPEN_RT_STREAM (%d × %d at %d fps, format %d)",
+                                    number(values, "w", 0, 1, 4096),
+                                    number(values, "h", 0, 1, 4096),
+                                    number(values, "fps", 0, 1, 120),
+                                    number(values, "format", -1, 0, 255))
+                    elif topic == "VIDEO_PARAM":
                         parameters = values
                     elif topic == "KEEP_ALIVE_INTERVAL":
                         interval_ms = number(values, "timeout", 30000, 1, 600000)
