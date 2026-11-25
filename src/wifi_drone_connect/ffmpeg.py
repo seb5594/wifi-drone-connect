@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
+from contextlib import aclosing, suppress
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -9,6 +10,10 @@ from .core import CameraError
 
 MAX_JPEG_BYTES = 8 * 1024 * 1024
 BOUNDARY = b"--wifi_drone_frame"
+FFMPEG = ("ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error")
+JPEG_OUTPUT = ("-flush_packets", "1", "-f", "mpjpeg", "-boundary_tag",
+               BOUNDARY[2:].decode("ascii"), "pipe:1")
+JPEG_ENCODER = ("-c:v", "mjpeg", "-q:v", "3", "-threads", "1")
 ROTATION_FILTERS = {90: "transpose=cclock", 180: "hflip,vflip", 270: "transpose=clock"}
 
 
@@ -77,39 +82,69 @@ class FFmpegCamera:
             input_options = ["-rtsp_transport", self.rtsp_transport, "-timeout", timeout]
         else:
             input_options = ["-rw_timeout", timeout]
-        codec = ["-c:v", "copy"] if self.copy_mjpeg else ["-c:v", "mjpeg", "-q:v", "3", "-threads", "1"]
+        codec = ["-c:v", "copy"] if self.copy_mjpeg else JPEG_ENCODER
         filters = ["-vf", ROTATION_FILTERS[self.rotate]] if self.rotate else []
         return [
-            "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
+            *FFMPEG,
             "-protocol_whitelist", "http,https,tls,tcp,udp,rtp",
             *input_options,
             "-i", self.url, "-map", "0:v:0", "-an", *filters, *codec,
-            "-flush_packets", "1", "-f", "mpjpeg", "-boundary_tag",
-            BOUNDARY[2:].decode("ascii"), "pipe:1",
+            *JPEG_OUTPUT,
         ]
 
     async def frames(self) -> AsyncGenerator[bytes, None]:
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *self.command(),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-        except OSError as error:
-            raise CameraError("Could not start FFmpeg") from error
+        async with aclosing(ffmpeg_frames(self.command(), self.frame_timeout)) as frames:
+            async for frame in frames:
+                yield frame
 
-        assert process.stdout is not None
-        try:
-            while True:
-                yield await asyncio.wait_for(read_jpeg(process.stdout), self.frame_timeout)
-        except TimeoutError as error:
+
+async def feed_ffmpeg(writer: asyncio.StreamWriter, source: AsyncGenerator[bytes, None]) -> None:
+    try:
+        async with aclosing(source) as chunks:
+            async for chunk in chunks:
+                writer.write(chunk)
+                await writer.drain()
+    finally:
+        writer.close()
+
+
+async def ffmpeg_frames(
+    command: list[str], frame_timeout: float,
+    source: AsyncGenerator[bytes, None] | None = None,
+) -> AsyncGenerator[bytes, None]:
+    """Read FFmpeg's JPEG output, optionally supplying compressed video through stdin."""
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdin=asyncio.subprocess.PIPE if source is not None else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError as error:
+        raise CameraError("Could not start FFmpeg") from error
+
+    assert process.stdout is not None
+    feeder = None
+    if source is not None:
+        assert process.stdin is not None
+        feeder = asyncio.create_task(feed_ffmpeg(process.stdin, source))
+    try:
+        while True:
+            yield await asyncio.wait_for(read_jpeg(process.stdout), frame_timeout)
+    except (TimeoutError, CameraError, asyncio.IncompleteReadError, ValueError) as error:
+        if feeder is not None and feeder.done() and not feeder.cancelled():
+            with suppress(OSError):
+                feeder.result()
+        if isinstance(error, TimeoutError):
             raise CameraError("Camera did not deliver a frame before the timeout") from error
-        except (asyncio.IncompleteReadError, ValueError) as error:
-            raise CameraError("Incomplete or invalid camera frame") from error
-        finally:
-            if process.returncode is None:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-            await process.communicate()
+        if isinstance(error, CameraError):
+            raise
+        raise CameraError("Incomplete or invalid camera frame") from error
+    finally:
+        if feeder is not None:
+            feeder.cancel()
+            await asyncio.gather(feeder, return_exceptions=True)
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.kill()
+        await process.communicate()

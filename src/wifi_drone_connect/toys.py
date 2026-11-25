@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlsplit, urlunsplit
 from .core import CameraAdapter, CameraError
 from .ffmpeg import FFmpegCamera
 from .jieli import JieliCamera
+from .lewei import LeweiCamera
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,17 +54,19 @@ class KYUFOCamera:
 def camera_for_url(url: str, rtsp_transport: str = "tcp", copy_mjpeg: bool = False) -> CameraAdapter:
     """Select a camera transport from an explicitly configured URL."""
     parsed = urlsplit(url)
-    if parsed.scheme not in {"kyufo", "jieli"}:
+    if parsed.scheme not in {"kyufo", "jieli", "lewei"}:
         return FFmpegCamera(url, rtsp_transport, copy_mjpeg)
     if not parsed.hostname or parsed.username is not None or parsed.fragment or parsed.port == 0:
         raise ValueError("Expected a toy camera hostname and an optional port")
     query = parse_qs(parsed.query, keep_blank_values=True)
     if any(len(values) != 1 for values in query.values()):
         raise ValueError("Toy camera options must occur only once")
-    if parsed.scheme == "jieli":
+    if parsed.scheme in {"jieli", "lewei"}:
         if parsed.path not in {"", "/"} or query:
-            raise ValueError("Use jieli://HOST with an optional CTP port")
-        return JieliCamera(parsed.hostname, parsed.port or 3333)
+            raise ValueError(f"Use {parsed.scheme}://HOST with an optional camera port")
+        if parsed.scheme == "jieli":
+            return JieliCamera(parsed.hostname, parsed.port or 3333)
+        return LeweiCamera(parsed.hostname, parsed.port or 7060)
 
     if set(query) - {"rotate"}:
         raise ValueError("KY UFO camera URL accepts only the rotate option")
