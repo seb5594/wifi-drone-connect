@@ -7,10 +7,10 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 
-from . import CameraError, FFmpegCamera, identify, profiles
+from . import CameraAdapter, CameraError, camera_for_url, identify, profiles
 
 
-async def snapshot(camera: FFmpegCamera) -> bytes:
+async def snapshot(camera: CameraAdapter) -> bytes:
     async with aclosing(camera.frames()) as frames:
         return await anext(frames)
 
@@ -33,7 +33,7 @@ def main() -> None:
         return
 
     try:
-        camera = FFmpegCamera(args.url, args.rtsp_transport, args.copy_mjpeg)
+        camera = camera_for_url(args.url, args.rtsp_transport, args.copy_mjpeg)
         args.output.write_bytes(asyncio.run(snapshot(camera)))
     except (CameraError, OSError, ValueError) as error:
         parser.exit(1, f"{error}\n")

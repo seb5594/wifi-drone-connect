@@ -9,6 +9,7 @@ from .core import CameraError
 
 MAX_JPEG_BYTES = 8 * 1024 * 1024
 BOUNDARY = b"--wifi_drone_frame"
+ROTATION_FILTERS = {90: "transpose=cclock", 180: "hflip,vflip", 270: "transpose=clock"}
 
 
 async def read_jpeg(stream: asyncio.StreamReader) -> bytes:
@@ -49,6 +50,7 @@ class FFmpegCamera:
     rtsp_transport: str = "tcp"
     copy_mjpeg: bool = False
     frame_timeout: float = 15
+    rotate: int = 0
 
     def __post_init__(self) -> None:
         try:
@@ -64,6 +66,11 @@ class FFmpegCamera:
         if not 0 < self.frame_timeout <= 300:
             raise ValueError("Frame timeout must be greater than zero and at most 300 seconds")
 
+        if self.rotate not in {0, *ROTATION_FILTERS}:
+            raise ValueError("Camera rotation must be 0, 90, 180 or 270 degrees")
+        if self.copy_mjpeg and self.rotate:
+            raise ValueError("Choose rotate=0 when preserving the original MJPEG frames")
+
     def command(self) -> list[str]:
         timeout = str(int(self.frame_timeout * 1_000_000))
         if urlsplit(self.url).scheme == "rtsp":
@@ -71,11 +78,12 @@ class FFmpegCamera:
         else:
             input_options = ["-rw_timeout", timeout]
         codec = ["-c:v", "copy"] if self.copy_mjpeg else ["-c:v", "mjpeg", "-q:v", "3", "-threads", "1"]
+        filters = ["-vf", ROTATION_FILTERS[self.rotate]] if self.rotate else []
         return [
             "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
             "-protocol_whitelist", "http,https,tls,tcp,udp,rtp",
             *input_options,
-            "-i", self.url, "-map", "0:v:0", "-an", *codec,
+            "-i", self.url, "-map", "0:v:0", "-an", *filters, *codec,
             "-flush_packets", "1", "-f", "mpjpeg", "-boundary_tag",
             BOUNDARY[2:].decode("ascii"), "pipe:1",
         ]
